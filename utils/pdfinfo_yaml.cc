@@ -404,6 +404,38 @@ static void printPdfSubtype(PDFDoc *doc, const UnicodeMap *uMap)
     }
 }
 
+static void printInfoYaml(PDFDoc *doc, const UnicodeMap *uMap, long long filesize, bool multiPage)
+{
+    double w, h, wISO, hISO, isoThreshold;
+    int pg, i;
+    int r;
+
+    // print doc info
+    Object info = doc->getDocInfo();
+    if (info.isDict()) {
+        printInfoString(info.getDict(), "Title", "Title:           ", uMap);
+        printInfoString(info.getDict(), "Subject", "Subject:         ", uMap);
+        printInfoString(info.getDict(), "Keywords", "Keywords:        ", uMap);
+        printInfoString(info.getDict(), "Author", "Author:          ", uMap);
+        printInfoString(info.getDict(), "Creator", "Creator:         ", uMap);
+        printInfoString(info.getDict(), "Producer", "Producer:        ", uMap);
+        printInfoDate(info.getDict(), "CreationDate", "CreationDate:    ", uMap);
+        printInfoDate(info.getDict(), "ModDate", "ModDate:         ", uMap);
+    }
+
+    // print file size
+    printf("File size:       %lld bytes\n", filesize);
+
+    // print linearization info
+    printf("Optimized:       %s\n", doc->isLinearized() ? "yes" : "no");
+
+    // print PDF version
+    printf("PDF version:     %d.%d\n", doc->getPDFMajorVersion(), doc->getPDFMinorVersion());
+
+    printPdfSubtype(doc, uMap);
+ 
+}
+
 static void printInfo(PDFDoc *doc, const UnicodeMap *uMap, long long filesize, bool multiPage)
 {
     double w, h, wISO, hISO, isoThreshold;
