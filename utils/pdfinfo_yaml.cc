@@ -113,16 +113,18 @@ static void printStdTextString(const std::string &s, const UnicodeMap *uMap)
     }
 }
 
-static void printInfoYaml(Dict *infoDict, const char *key, const char *text, const UnicodeMap *uMap)
+// YAML equivalent of printInfoString: emits `<indent><yamlKey>: "<value>"`
+// with the value double-quote-escaped, or nothing if the key is absent.
+static void printInfoStringYaml(Dict *infoDict, const char *key, const char *yamlKey, const UnicodeMap *uMap, unsigned indent = 0)
 {
     Object obj = infoDict->lookup(key);
     if (obj.isString()) {
-        fputs(text, stdout);
-        const std::string &s1 = obj.getString();
-        const std::string &s2 = std::string("\"+obj.getString())+"\"";
-
-        printStdTextString(s2, uMap);
-        fputc('\n', stdout);
+        for (unsigned i = 0; i < indent; i++) {
+            fputs("  ", stdout);
+        }
+        printf("%s: \"", yamlKey);
+        printYamlTextString(obj.getString(), uMap);
+        printf("\"\n");
     }
 }
 
@@ -427,8 +429,8 @@ static void printInfoYaml(PDFDoc *doc, const UnicodeMap *uMap, long long filesiz
     // print doc info
     Object info = doc->getDocInfo();
     if (info.isDict()) {
-        printInfoYaml(info.getDict(), "Title", "Title:           ", uMap);
-        printInfoYaml(info.getDict(), "Author", "Author:          ", uMap);
+        printInfoStringYaml(info.getDict(), "Title", "Title:           ", uMap);
+        printInfoStringYaml(info.getDict(), "Author", "Author:          ", uMap);
     }
 
     // print file size
