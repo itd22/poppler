@@ -1,5 +1,7 @@
 # program pdfinfo-yaml 
 
+based on https://gitlab.freedesktop.org/poppler/poppler
+
 # added features
 
 flag:  -y
