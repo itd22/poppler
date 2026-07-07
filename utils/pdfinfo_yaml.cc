@@ -113,6 +113,20 @@ static void printStdTextString(const std::string &s, const UnicodeMap *uMap)
     }
 }
 
+static void printInfoYaml(Dict *infoDict, const char *key, const char *text, const UnicodeMap *uMap)
+{
+    Object obj = infoDict->lookup(key);
+    if (obj.isString()) {
+        fputs(text, stdout);
+        const std::string &s1 = obj.getString();
+        const std::string &s2 = std::string("\"+obj.getString())+"\"";
+
+        printStdTextString(s2, uMap);
+        fputc('\n', stdout);
+    }
+}
+
+
 static void printInfoString(Dict *infoDict, const char *key, const char *text, const UnicodeMap *uMap)
 {
     Object obj = infoDict->lookup(key);
@@ -413,21 +427,15 @@ static void printInfoYaml(PDFDoc *doc, const UnicodeMap *uMap, long long filesiz
     // print doc info
     Object info = doc->getDocInfo();
     if (info.isDict()) {
-        printInfoString(info.getDict(), "Title", "Title:           ", uMap);
-        printInfoString(info.getDict(), "Subject", "Subject:         ", uMap);
-        printInfoString(info.getDict(), "Keywords", "Keywords:        ", uMap);
-        printInfoString(info.getDict(), "Author", "Author:          ", uMap);
-        printInfoString(info.getDict(), "Creator", "Creator:         ", uMap);
-        printInfoString(info.getDict(), "Producer", "Producer:        ", uMap);
-        printInfoDate(info.getDict(), "CreationDate", "CreationDate:    ", uMap);
-        printInfoDate(info.getDict(), "ModDate", "ModDate:         ", uMap);
+        printInfoYaml(info.getDict(), "Title", "Title:           ", uMap);
+        printInfoYaml(info.getDict(), "Author", "Author:          ", uMap);
     }
 
     // print file size
     printf("File size:       %lld bytes\n", filesize);
 
     // print linearization info
-    printf("Optimized:       %s\n", doc->isLinearized() ? "yes" : "no");
+    printf("Optimized:       %s\n", doc->isLinearized() ? "true" : "false");
 
     // print PDF version
     printf("PDF version:     %d.%d\n", doc->getPDFMajorVersion(), doc->getPDFMinorVersion());
