@@ -131,10 +131,6 @@ static void printYamlTextString(const std::string &s, const UnicodeMap *uMap)
     }
 }
 
-
-
-
-
 static void printStdTextString(const std::string &s, const UnicodeMap *uMap)
 {
     char buf[8];
@@ -142,6 +138,17 @@ static void printStdTextString(const std::string &s, const UnicodeMap *uMap)
     for (const auto &c : u) {
         int n = uMap->mapUnicode(c, buf, sizeof(buf));
         putSanitized(buf, n, stdout);
+    }
+}
+
+static void printInfoString(Dict *infoDict, const char *key, const char *text, const UnicodeMap *uMap)
+{
+    Object obj = infoDict->lookup(key);
+    if (obj.isString()) {
+        fputs(text, stdout);
+        const std::string &s1 = obj.getString();
+        printStdTextString(s1, uMap);
+        fputc('\n', stdout);
     }
 }
 
@@ -157,18 +164,6 @@ static void printInfoStringYaml(Dict *infoDict, const char *key, const char *yam
         printf("%s: \"", yamlKey);
         printYamlTextString(obj.getString(), uMap);
         printf("\"\n");
-    }
-}
-
-
-static void printInfoString(Dict *infoDict, const char *key, const char *text, const UnicodeMap *uMap)
-{
-    Object obj = infoDict->lookup(key);
-    if (obj.isString()) {
-        fputs(text, stdout);
-        const std::string &s1 = obj.getString();
-        printStdTextString(s1, uMap);
-        fputc('\n', stdout);
     }
 }
 
@@ -452,32 +447,6 @@ static void printPdfSubtype(PDFDoc *doc, const UnicodeMap *uMap)
     }
 }
 
-static void printInfoYaml(PDFDoc *doc, const UnicodeMap *uMap, long long filesize, bool multiPage)
-{
-    double w, h, wISO, hISO, isoThreshold;
-    int pg, i;
-    int r;
-
-    // print doc info
-    Object info = doc->getDocInfo();
-    if (info.isDict()) {
-        printInfoStringYaml(info.getDict(), "Title", "Title:           ", uMap);
-        printInfoStringYaml(info.getDict(), "Author", "Author:          ", uMap);
-    }
-
-    // print file size
-    printf("File size:       %lld bytes\n", filesize);
-
-    // print linearization info
-    printf("Optimized:       %s\n", doc->isLinearized() ? "true" : "false");
-
-    // print PDF version
-    printf("PDF version:     %d.%d\n", doc->getPDFMajorVersion(), doc->getPDFMinorVersion());
-
-    printPdfSubtype(doc, uMap);
- 
-}
-
 static void printInfo(PDFDoc *doc, const UnicodeMap *uMap, long long filesize, bool multiPage)
 {
     double w, h, wISO, hISO, isoThreshold;
@@ -624,6 +593,30 @@ static void printInfo(PDFDoc *doc, const UnicodeMap *uMap, long long filesize, b
     printPdfSubtype(doc, uMap);
 }
 
+// YAML equivalent of printInfo: emits the same information as a single YAML
+// document instead of the plain-text report.
+static void printInfoYaml(PDFDoc *doc, const UnicodeMap *uMap, long long filesize, bool multiPage)
+{
+
+    // doc info
+    Object info = doc->getDocInfo();
+    if (info.isDict()) {
+        printInfoStringYaml(info.getDict(), "Title", "title", uMap);
+        printInfoStringYaml(info.getDict(), "Author", "author", uMap);
+    }
+
+    // print file size
+    printf("File size:       %lld bytes\n", filesize);
+
+    // print linearization info
+    printf("Optimized:       %s\n", doc->isLinearized() ? "true" : "false");
+
+    // print PDF version
+    printf("PDF version:     %d.%d\n", doc->getPDFMajorVersion(), doc->getPDFMinorVersion());
+
+    printPdfSubtype(doc, uMap);
+}
+
 int main(int argc, char *argv[])
 {
     std::unique_ptr<PDFDoc> doc;
@@ -700,10 +693,11 @@ int main(int argc, char *argv[])
             lastPage = 1;
         }
 
-        // NOTE: output_yaml (-y) is currently only captured here; YAML-formatted
-        // output is not yet implemented and printInfo() always prints the
-        // existing plain-text format regardless of its value.
-        printInfo(doc.get(), uMap, filesize, multiPage);
+        if (output_yaml) {
+            printInfoYaml(doc.get(), uMap, filesize, multiPage);
+        } else {
+            printInfo(doc.get(), uMap, filesize, multiPage);
+        }
     }
     exitCode = 0;
 
