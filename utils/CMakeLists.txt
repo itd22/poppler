@@ -98,6 +98,13 @@ target_link_libraries(pdfinfo ${common_libs})
 install(TARGETS pdfinfo DESTINATION bin)
 install(FILES pdfinfo.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
 
+# pdfinfo_yaml
+set(pdfinfo_SOURCES
+  pdfinfo_yaml.cc printencodings.cc
+)
+add_executable(pdfinfo-yaml ${pdfinfo_SOURCES})
+target_link_libraries(pdfinfo-yaml ${common_libs})
+
 if (GETTEXT_FOUND AND Intl_FOUND AND ENABLE_SIGNATURES)
   add_definitions(-DHAVE_GETTEXT)
   add_definitions(-DCMAKE_INSTALL_LOCALEDIR="${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LOCALEDIR}")

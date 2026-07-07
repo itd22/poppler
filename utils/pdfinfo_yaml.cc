@@ -45,15 +45,12 @@
 #include <cstring>
 #include <ctime>
 #include <cmath>
-#include <map>
 #include <numbers>
 #include <set>
 #include "parseargs.h"
-#include "printencodings.h"
 #include "goo/GooString.h"
 #include "goo/gfile.h"
 #include "goo/glibc.h"
-#include "Annot.h"
 #include "GlobalParams.h"
 #include "Object.h"
 #include "Stream.h"
@@ -70,51 +67,13 @@
 #include "Error.h"
 #include "DateInfo.h"
 #include "JSInfo.h"
-#include "StructTreeRoot.h"
-#include "StructElement.h"
 #include "Win32Console.h"
 
 static int firstPage = 1;
 static int lastPage = 0;
-static bool printBoxes = false;
-static bool printMetadata = false;
-static bool printCustom = false;
-static bool printJS = false;
-static bool isoDates = false;
-static bool rawDates = false;
-static char textEncName[128] = "";
-static char ownerPassword[33] = "\001";
-static char userPassword[33] = "\001";
-static bool printVersion = false;
-static bool printHelp = false;
-static bool printEnc = false;
-static bool printStructure = false;
-static bool printStructureText = false;
-static bool printDests = false;
-static bool printUrls = false;
+static bool output_yaml = false;
 
-static const ArgDesc argDesc[] = { { .arg = "-f", .kind = argInt, .val = &firstPage, .size = 0, .usage = "first page to convert" },
-                                   { .arg = "-l", .kind = argInt, .val = &lastPage, .size = 0, .usage = "last page to convert" },
-                                   { .arg = "-box", .kind = argFlag, .val = &printBoxes, .size = 0, .usage = "print the page bounding boxes" },
-                                   { .arg = "-meta", .kind = argFlag, .val = &printMetadata, .size = 0, .usage = "print the document metadata (XML)" },
-                                   { .arg = "-custom", .kind = argFlag, .val = &printCustom, .size = 0, .usage = "print both custom and standard metadata" },
-                                   { .arg = "-js", .kind = argFlag, .val = &printJS, .size = 0, .usage = "print all JavaScript in the PDF" },
-                                   { .arg = "-struct", .kind = argFlag, .val = &printStructure, .size = 0, .usage = "print the logical document structure (for tagged files)" },
-                                   { .arg = "-struct-text", .kind = argFlag, .val = &printStructureText, .size = 0, .usage = "print text contents along with document structure (for tagged files)" },
-                                   { .arg = "-isodates", .kind = argFlag, .val = &isoDates, .size = 0, .usage = "print the dates in ISO-8601 format" },
-                                   { .arg = "-rawdates", .kind = argFlag, .val = &rawDates, .size = 0, .usage = "print the undecoded date strings directly from the PDF file" },
-                                   { .arg = "-dests", .kind = argFlag, .val = &printDests, .size = 0, .usage = "print all named destinations in the PDF" },
-                                   { .arg = "-url", .kind = argFlag, .val = &printUrls, .size = 0, .usage = "print all URLs inside PDF objects (does not scan text content)" },
-                                   { .arg = "-enc", .kind = argString, .val = textEncName, .size = sizeof(textEncName), .usage = "output text encoding name" },
-                                   { .arg = "-listenc", .kind = argFlag, .val = &printEnc, .size = 0, .usage = "list available encodings" },
-                                   { .arg = "-opw", .kind = argString, .val = ownerPassword, .size = sizeof(ownerPassword), .usage = "owner password (for encrypted files)" },
-                                   { .arg = "-upw", .kind = argString, .val = userPassword, .size = sizeof(userPassword), .usage = "user password (for encrypted files)" },
-                                   { .arg = "-v", .kind = argFlag, .val = &printVersion, .size = 0, .usage = "print copyright and version info" },
-                                   { .arg = "-h", .kind = argFlag, .val = &printHelp, .size = 0, .usage = "print usage information" },
-                                   { .arg = "-help", .kind = argFlag, .val = &printHelp, .size = 0, .usage = "print usage information" },
-                                   { .arg = "--help", .kind = argFlag, .val = &printHelp, .size = 0, .usage = "print usage information" },
-                                   { .arg = "-?", .kind = argFlag, .val = &printHelp, .size = 0, .usage = "print usage information" },
-                                   {} };
+static const ArgDesc argDesc[] = { { .arg = "-y", .kind = argFlag, .val = &output_yaml, .size = 0, .usage = "output as YAML" }, {} };
 
 // sanitize output to prevent terminal escape injection and line spoofing
 static bool isDangerousCtrl(unsigned char c)
@@ -150,15 +109,6 @@ static void printStdTextString(const std::string &s, const UnicodeMap *uMap)
     const std::vector<Unicode> u = TextStringToUCS4(s);
     for (const auto &c : u) {
         int n = uMap->mapUnicode(c, buf, sizeof(buf));
-        putSanitized(buf, n, stdout);
-    }
-}
-
-static void printUCS4String(const std::vector<Unicode> &u, const UnicodeMap *uMap)
-{
-    char buf[8];
-    for (auto i : u) {
-        int n = uMap->mapUnicode(i, buf, sizeof(buf));
         putSanitized(buf, n, stdout);
     }
 }
@@ -215,259 +165,6 @@ static void printInfoDate(Dict *infoDict, const char *key, const char *text, con
             printStdTextString(s, uMap);
         }
         fputc('\n', stdout);
-    }
-}
-
-static void printISODate(Dict *infoDict, const char *key, const char *text, const UnicodeMap *uMap)
-{
-    int year, mon, day, hour, min, sec, tz_hour, tz_minute;
-    char tz;
-
-    Object obj = infoDict->lookup(key);
-    if (obj.isString()) {
-        fputs(text, stdout);
-        const std::string &s = obj.getString();
-        if (parseDateString(s, &year, &mon, &day, &hour, &min, &sec, &tz, &tz_hour, &tz_minute)) {
-            fprintf(stdout, "%04d-%02d-%02dT%02d:%02d:%02d", year, mon, day, hour, min, sec);
-            if (tz_hour == 0 && tz_minute == 0) {
-                fprintf(stdout, "Z");
-            } else {
-                fprintf(stdout, "%c%02d", tz, tz_hour);
-                if (tz_minute) {
-                    fprintf(stdout, ":%02d", tz_minute);
-                }
-            }
-        } else {
-            printStdTextString(obj.getString(), uMap);
-        }
-        fputc('\n', stdout);
-    }
-}
-
-static void printBox(const char *text, const PDFRectangle &box)
-{
-    printf("%s%8.2f %8.2f %8.2f %8.2f\n", text, box.x1, box.y1, box.x2, box.y2);
-}
-
-static void printIndent(unsigned indent)
-{
-    while (indent--) {
-        putchar(' ');
-        putchar(' ');
-    }
-}
-
-static void printAttribute(const Attribute *attribute, unsigned indent)
-{
-    printIndent(indent);
-    printf(" /%s ", attribute->getTypeName());
-    if (attribute->getType() == Attribute::UserProperty) {
-        const char *name = attribute->getName();
-        printf("(");
-        putSanitized(name, strlen(name), stdout);
-        printf(") ");
-    }
-    attribute->getValue()->print(stdout);
-    if (attribute->getFormattedValue()) {
-        const char *fv = attribute->getFormattedValue();
-        printf(" \"");
-        putSanitized(fv, strlen(fv), stdout);
-        printf("\"");
-    }
-    if (attribute->isHidden()) {
-        printf(" [hidden]");
-    }
-}
-
-static void printStruct(const StructElement *element, unsigned indent)
-{
-    if (element->isObjectRef()) {
-        printIndent(indent);
-        printf("Object %i %i\n", element->getObjectRef().num, element->getObjectRef().gen);
-        return;
-    }
-
-    if (printStructureText && element->isContent()) {
-        GooString *text = element->getText(false);
-        printIndent(indent);
-        if (text) {
-            printf("\"");
-            putSanitized(text->c_str(), text->size(), stdout);
-            printf("\"\n");
-        } else {
-            printf("(No content?)\n");
-        }
-        delete text;
-    }
-
-    if (!element->isContent()) {
-        printIndent(indent);
-        printf("%s", element->getTypeName());
-        if (element->getID()) {
-            printf(" <");
-            putSanitized(element->getID()->c_str(), element->getID()->size(), stdout);
-            printf(">");
-        }
-        if (element->getTitle()) {
-            printf(" \"");
-            putSanitized(element->getTitle()->c_str(), element->getTitle()->size(), stdout);
-            printf("\"");
-        }
-        if (element->getRevision() > 0) {
-            printf(" r%u", element->getRevision());
-        }
-        if (element->isInline() || element->isBlock()) {
-            printf(" (%s)", element->isInline() ? "inline" : "block");
-        }
-        if (element->getAltText()) {
-            std::string alt = TextStringToUtf8(element->getAltText()->toStr());
-            printf(" [\"");
-            putSanitized(alt.c_str(), alt.size(), stdout);
-            printf("\"]");
-        }
-        if (element->getNumAttributes()) {
-            putchar(':');
-            for (unsigned i = 0; i < element->getNumAttributes(); i++) {
-                putchar('\n');
-                printAttribute(element->getAttribute(i), indent + 1);
-            }
-        }
-
-        putchar('\n');
-        for (unsigned i = 0; i < element->getNumChildren(); i++) {
-            printStruct(element->getChild(i), indent + 1);
-        }
-    }
-}
-
-static void printLinkDest(const std::unique_ptr<LinkDest> &dest)
-{
-    std::string s;
-
-    switch (dest->getKind()) {
-    case destXYZ:
-        s.append("[ XYZ ");
-        if (dest->getChangeLeft()) {
-            GooString::appendf(s, "{0:4.0g} ", dest->getLeft());
-        } else {
-            s.append("null ");
-        }
-        if (dest->getChangeTop()) {
-            GooString::appendf(s, "{0:4.0g} ", dest->getTop());
-        } else {
-            s.append("null ");
-        }
-        if (dest->getChangeZoom()) {
-            GooString::appendf(s, "{0:4.2f} ", dest->getZoom());
-        } else {
-            s.append("null ");
-        }
-        break;
-    case destFit:
-        s.append("[ Fit ");
-        break;
-    case destFitH:
-        if (dest->getChangeTop()) {
-            GooString::appendf(s, "[ FitH {0:4.0g} ", dest->getTop());
-        } else {
-            s.append("[ FitH null ");
-        }
-        break;
-    case destFitV:
-        if (dest->getChangeLeft()) {
-            GooString::appendf(s, "[ FitV {0:4.0g} ", dest->getLeft());
-        } else {
-            s.append("[ FitV null ");
-        }
-        break;
-    case destFitR:
-        GooString::appendf(s, "[ FitR {0:4.0g} {1:4.0g} {2:4.0g} {3:4.0g} ", dest->getLeft(), dest->getBottom(), dest->getRight(), dest->getTop());
-        break;
-    case destFitB:
-        s.append("[ FitB ");
-        break;
-    case destFitBH:
-        if (dest->getChangeTop()) {
-            GooString::appendf(s, "[ FitBH {0:4.0g} ", dest->getTop());
-        } else {
-            s.append("[ FitBH null ");
-        }
-        break;
-    case destFitBV:
-        if (dest->getChangeLeft()) {
-            GooString::appendf(s, "[ FitBV {0:4.0g} ", dest->getLeft());
-        } else {
-            s.append("[ FitBV null ");
-        }
-        break;
-    }
-
-    s.append("                                ");
-    s[26] = ']';
-    s[27] = '\0';
-    printf("%s", s.c_str());
-}
-
-static void printDestinations(PDFDoc *doc, const UnicodeMap *uMap)
-{
-    std::map<Ref, std::map<std::string, std::unique_ptr<LinkDest>>> map;
-
-    int numDests = doc->getCatalog()->numDestNameTree();
-    for (int i = 0; i < numDests; i++) {
-        const GooString *name = doc->getCatalog()->getDestNameTreeName(i);
-        std::unique_ptr<LinkDest> dest = doc->getCatalog()->getDestNameTreeDest(i);
-        if (name && dest && dest->isPageRef()) {
-            Ref pageRef = dest->getPageRef();
-            map[pageRef].insert(std::make_pair(name->toStr(), std::move(dest)));
-        }
-    }
-
-    numDests = doc->getCatalog()->numDests();
-    for (int i = 0; i < numDests; i++) {
-        const char *name = doc->getCatalog()->getDestsName(i);
-        std::unique_ptr<LinkDest> dest = doc->getCatalog()->getDestsDest(i);
-        if (name && dest && dest->isPageRef()) {
-            Ref pageRef = dest->getPageRef();
-            map[pageRef].insert(std::make_pair(name, std::move(dest)));
-        }
-    }
-
-    printf("Page  Destination                 Name\n");
-    for (int i = firstPage; i <= lastPage; i++) {
-        Ref *ref = doc->getCatalog()->getPageRef(i);
-        if (ref) {
-            auto pageDests = map.find(*ref);
-            if (pageDests != map.end()) {
-                for (auto &it : pageDests->second) {
-                    printf("%4d ", i);
-                    printLinkDest(it.second);
-                    printf(" \"");
-                    printStdTextString(it.first, uMap);
-                    printf("\"\n");
-                }
-            }
-        }
-    }
-}
-
-static void printUrlList(PDFDoc *doc)
-{
-    printf("Page  Type          URL\n");
-    for (int pg = firstPage; pg <= lastPage; pg++) {
-        Page *page = doc->getPage(pg);
-        if (page) {
-            std::unique_ptr<Links> links = page->getLinks();
-            for (const std::shared_ptr<AnnotLink> &annot : links->getLinks()) {
-                LinkAction *action = annot->getAction();
-                if (action && action->getKind() == actionURI) {
-                    auto *linkUri = dynamic_cast<LinkURI *>(action);
-                    std::string uri = linkUri->getURI();
-                    printf("%4d  Annotation    ", pg);
-                    putSanitized(uri.c_str(), uri.size(), stdout);
-                    printf("\n");
-                }
-            }
-        }
     }
 }
 
@@ -707,63 +404,8 @@ static void printPdfSubtype(PDFDoc *doc, const UnicodeMap *uMap)
     }
 }
 
-static void printCustomInfo(PDFDoc *doc, const UnicodeMap *uMap)
-{
-    Object info = doc->getDocInfo();
-    if (info.isDict()) {
-        Dict *dict = info.getDict();
-
-        // Sort keys
-        std::set<std::string> keys;
-        for (int i = 0; i < dict->getLength(); i++) {
-            std::string key(dict->getKey(i));
-            if (key != "Trapped") {
-                keys.insert(key);
-            }
-        }
-
-        for (const std::string &key : keys) {
-            if (key == "CreationDate") {
-                if (isoDates) {
-                    printISODate(info.getDict(), "CreationDate", "CreationDate:    ", uMap);
-                } else if (rawDates) {
-                    printInfoString(info.getDict(), "CreationDate", "CreationDate:    ", uMap);
-                } else {
-                    printInfoDate(info.getDict(), "CreationDate", "CreationDate:    ", uMap);
-                }
-            } else if (key == "ModDate") {
-                if (isoDates) {
-                    printISODate(info.getDict(), "ModDate", "ModDate:         ", uMap);
-                } else if (rawDates) {
-                    printInfoString(info.getDict(), "ModDate", "ModDate:         ", uMap);
-                } else {
-                    printInfoDate(info.getDict(), "ModDate", "ModDate:         ", uMap);
-                }
-            } else {
-                Object obj = dict->lookup(key);
-                if (obj.isString()) {
-                    // print key
-                    std::vector<Unicode> u = utf8ToUCS4(key);
-                    printUCS4String(u, uMap);
-                    fputs(":", stdout);
-                    for (size_t i = u.size(); i < 16; i++) {
-                        fputs(" ", stdout);
-                    }
-
-                    // print value
-                    const auto &val_str = obj.getString();
-                    printStdTextString(val_str, uMap);
-                    fputc('\n', stdout);
-                }
-            }
-        }
-    }
-}
-
 static void printInfo(PDFDoc *doc, const UnicodeMap *uMap, long long filesize, bool multiPage)
 {
-    Page *page;
-    char buf[256];
     double w, h, wISO, hISO, isoThreshold;
     int pg, i;
     int r;
@@ -777,16 +419,8 @@ static void printInfo(PDFDoc *doc, const UnicodeMap *uMap, long long filesize, b
         printInfoString(info.getDict(), "Author", "Author:          ", uMap);
         printInfoString(info.getDict(), "Creator", "Creator:         ", uMap);
         printInfoString(info.getDict(), "Producer", "Producer:        ", uMap);
-        if (isoDates) {
-            printISODate(info.getDict(), "CreationDate", "CreationDate:    ", uMap);
-            printISODate(info.getDict(), "ModDate", "ModDate:         ", uMap);
-        } else if (rawDates) {
-            printInfoString(info.getDict(), "CreationDate", "CreationDate:    ", uMap);
-            printInfoString(info.getDict(), "ModDate", "ModDate:         ", uMap);
-        } else {
-            printInfoDate(info.getDict(), "CreationDate", "CreationDate:    ", uMap);
-            printInfoDate(info.getDict(), "ModDate", "ModDate:         ", uMap);
-        }
+        printInfoDate(info.getDict(), "CreationDate", "CreationDate:    ", uMap);
+        printInfoDate(info.getDict(), "ModDate", "ModDate:         ", uMap);
     }
 
     bool hasMetadata = false;
@@ -904,40 +538,6 @@ static void printInfo(PDFDoc *doc, const UnicodeMap *uMap, long long filesize, b
         }
     }
 
-    // print the boxes
-    if (printBoxes) {
-        if (multiPage) {
-            for (pg = firstPage; pg <= lastPage; ++pg) {
-                page = doc->getPage(pg);
-                if (!page) {
-                    error(errSyntaxError, -1, "Failed to print boxes for page {0:d}", pg);
-                    continue;
-                }
-                sprintf(buf, "Page %4d MediaBox:  ", pg);
-                printBox(buf, page->getMediaBox());
-                sprintf(buf, "Page %4d CropBox:   ", pg);
-                printBox(buf, page->getCropBox());
-                sprintf(buf, "Page %4d BleedBox:  ", pg);
-                printBox(buf, page->getBleedBox());
-                sprintf(buf, "Page %4d TrimBox:   ", pg);
-                printBox(buf, page->getTrimBox());
-                sprintf(buf, "Page %4d ArtBox:    ", pg);
-                printBox(buf, page->getArtBox());
-            }
-        } else {
-            page = doc->getPage(firstPage);
-            if (!page) {
-                error(errSyntaxError, -1, "Failed to print boxes for page {0:d}", firstPage);
-            } else {
-                printBox("MediaBox:        ", page->getMediaBox());
-                printBox("CropBox:         ", page->getCropBox());
-                printBox("BleedBox:        ", page->getBleedBox());
-                printBox("TrimBox:         ", page->getTrimBox());
-                printBox("ArtBox:          ", page->getArtBox());
-            }
-        }
-    }
-
     // print file size
     printf("File size:       %lld bytes\n", filesize);
 
@@ -966,51 +566,24 @@ int main(int argc, char *argv[])
     // parse args
     Win32Console win32console(&argc, &argv);
     ok = parseArgs(argDesc, &argc, argv);
-    if (!ok || (argc != 2 && !printEnc) || printVersion || printHelp) {
+    if (!ok || argc != 2) {
         fprintf(stderr, "pdfinfo version %s\n", PACKAGE_VERSION);
         fprintf(stderr, "%s\n", popplerCopyright);
         fprintf(stderr, "%s\n", xpdfCopyright);
-        if (!printVersion) {
-            printUsage("pdfinfo", "<PDF-file>", argDesc);
-        }
-        if (printVersion || printHelp) {
-            exitCode = 0;
-        }
+        printUsage("pdfinfo", "<PDF-file>", argDesc);
         goto err0;
-    }
-
-    if (printStructureText) {
-        printStructure = true;
     }
 
     // read config file
     globalParams = std::make_unique<GlobalParams>();
 
-    if (printEnc) {
-        printEncodings();
-        exitCode = 0;
-        goto err0;
-    }
-
     fileName = new GooString(argv[1]);
-
-    if (textEncName[0]) {
-        globalParams->setTextEncoding(textEncName);
-    }
 
     // get mapping to output encoding
     if (!(uMap = globalParams->getTextEncoding())) {
         error(errCommandLine, -1, "Couldn't get text encoding");
         delete fileName;
         goto err1;
-    }
-
-    // open PDF file
-    if (ownerPassword[0] != '\001') {
-        ownerPW = GooString(ownerPassword);
-    }
-    if (userPassword[0] != '\001') {
-        userPW = GooString(userPassword);
     }
 
     if (fileName->compare("-") == 0) {
@@ -1038,42 +611,7 @@ int main(int argc, char *argv[])
         goto err2;
     }
 
-    if (printMetadata) {
-        // print the metadata
-        const std::unique_ptr<GooString> metadata = doc->readMetadata();
-        if (metadata) {
-            // sanitize but keep newlines for XML structure
-            for (const char *p = metadata->c_str(); *p; p++) {
-                auto c = static_cast<unsigned char>(*p);
-                if (c == '\n') {
-                    fputc(c, stdout);
-                } else if (isDangerousCtrl(c)) {
-                    fputc('?', stdout);
-                } else {
-                    fputc(c, stdout);
-                }
-            }
-            fputc('\n', stdout);
-        }
-    } else if (printCustom) {
-        printCustomInfo(doc.get(), uMap);
-    } else if (printJS) {
-        // print javascript
-        JSInfo jsInfo(doc.get(), firstPage - 1);
-        jsInfo.scanJS(lastPage - firstPage + 1, stdout, uMap);
-    } else if (printStructure || printStructureText) {
-        // print structure
-        const StructTreeRoot *structTree = doc->getCatalog()->getStructTreeRoot();
-        if (structTree) {
-            for (unsigned i = 0; i < structTree->getNumChildren(); i++) {
-                printStruct(structTree->getChild(i), 0);
-            }
-        }
-    } else if (printDests) {
-        printDestinations(doc.get(), uMap);
-    } else if (printUrls) {
-        printUrlList(doc.get());
-    } else {
+    {
         // print info
         long long filesize = 0;
 
@@ -1088,6 +626,9 @@ int main(int argc, char *argv[])
             lastPage = 1;
         }
 
+        // NOTE: output_yaml (-y) is currently only captured here; YAML-formatted
+        // output is not yet implemented and printInfo() always prints the
+        // existing plain-text format regardless of its value.
         printInfo(doc.get(), uMap, filesize, multiPage);
     }
     exitCode = 0;
