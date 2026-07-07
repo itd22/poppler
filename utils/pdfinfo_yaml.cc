@@ -103,6 +103,38 @@ static void putSanitized(const char *s, int len, FILE *f)
     }
 }
 
+// Like putSanitized, but also escapes characters that are significant inside
+// a YAML double-quoted scalar ('"' and '\') so the resulting stream is always
+// valid YAML.
+static void putYamlEscaped(const char *s, int len, FILE *f)
+{
+    for (int i = 0; i < len; i++) {
+        auto c = static_cast<unsigned char>(s[i]);
+        if (isDangerousCtrl(c)) {
+            fputc('?', f);
+        } else if (c == '"' || c == '\\') {
+            fputc('\\', f);
+            fputc(c, f);
+        } else {
+            fputc(c, f);
+        }
+    }
+}
+
+static void printYamlTextString(const std::string &s, const UnicodeMap *uMap)
+{
+    char buf[8];
+    const std::vector<Unicode> u = TextStringToUCS4(s);
+    for (const auto &c : u) {
+        int n = uMap->mapUnicode(c, buf, sizeof(buf));
+        putYamlEscaped(buf, n, stdout);
+    }
+}
+
+
+
+
+
 static void printStdTextString(const std::string &s, const UnicodeMap *uMap)
 {
     char buf[8];
