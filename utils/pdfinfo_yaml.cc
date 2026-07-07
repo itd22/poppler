@@ -606,7 +606,7 @@ static void printInfoYaml(PDFDoc *doc, const UnicodeMap *uMap, long long filesiz
     }
 
     // print file size
-    printf("File size:       %lld bytes\n", filesize);
+    printf("size:       %lld\n", filesize);
 
     // print linearization info
     printf("Optimized:       %s\n", doc->isLinearized() ? "true" : "false");
